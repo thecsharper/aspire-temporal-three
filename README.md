@@ -1,19 +1,24 @@
-# TemporalAspireDemo
+# aspire-temporal-three
 
-Welcome to a guided tour of the small sample application we built together. Over a few pull requests we transformed a minimal Aspire/Temporal setup into a secure demo complete with a Key Vault emulator and automated tests. This README recounts that journey in a blog style, preserving the original instructions while highlighting the steps we took along the way.
+Welcome to the **next step** in combining [.NET Aspire](https://learn.microsoft.com/dotnet/aspire/) and [Temporal](https://temporal.io/).
+
+In our previous repo — [aspire-temporal-one](https://github.com/rebeccapowell/aspire-temporal-one) — we explored a minimal integration: run a Temporal workflow alongside a .NET Aspire app using the [`InfinityFlow.Aspire.Temporal`](https://www.nuget.org/packages/InfinityFlow.Aspire.Temporal) package.
+
+This new repository, **aspire-temporal-three**, shows how to go further: secure your workflow data with encryption, manage rotating keys, and run everything — including a Key Vault emulator and Redis — entirely within Aspire. No cloud services. No infrastructure. Just code.
 
 ---
 
-## How It Started
+## Expanding our application
 
-Our first PR focused on showing how [Temporal](https://temporal.io/) can run alongside [\.NET Aspire](https://learn.microsoft.com/dotnet/aspire/). We used the [`InfinityFlow.Aspire.Temporal`](https://www.nuget.org/packages/InfinityFlow.Aspire.Temporal) package to spin up a local dev server directly from the `AppHost` project. The application consisted of:
+The application has been expanded:
 
-- **AppHost** – boots Temporal and coordinates the other projects.
-- **Api** – exposes endpoints for starting, signalling and querying a workflow.
-- **Worker** – executes the workflow logic.
-- **Workflows** – shared workflow and activity implementations.
+- **AppHost** – boots the entire Aspire application, including Temporal, Key Vault Emulator, Redis, and orchestrates dependencies.
+- **Api** – REST API that lets users start, signal, query workflows, test codecs, and trigger key rotations.
+- **Worker** – executes the Temporal workflows, configured with encrypted payload codecs.
+- **Workflows** – contains shared workflow and activity definitions, including encryption logic.
+- **KeyVaultSeeder** - seeds initial encryption key(s) into Key Vault Emulator and syncs Redis with available key metadata.
 
-A trimmed version of `AppHost/Program.cs` illustrates the basics:
+A trimmed version of `AppHost/Program.cs` illustrates the basics of how this started:
 
 ```csharp
 var builder = DistributedApplication.CreateBuilder(args);
@@ -27,25 +32,19 @@ var temporal = await builder.AddTemporalServerContainer("temporal", b => b
 
 temporal.PublishAsConnectionString();
 
-var cache = builder.AddRedis("cache").WithRedisCommander();
-cache.PublishAsConnectionString();
-
 builder.AddProject<Api>("api")
-    .WithReference(temporal)
-    .WithReference(cache);
+    .WithReference(temporal);
 builder.AddProject<Worker>("worker")
-    .WithReference(temporal)
-    .WithReference(cache);
+    .WithReference(temporal);
 
-var app = builder.Build();
-await app.StartAsync();
-await app.WaitForShutdownAsync();
+builder.Build().Run();
 ```
 
 At this point running `dotnet run --project AppHost` launched Temporal and we could POST to `/start/{message}` to kick off a workflow. The worker used `Temporalio.Extensions.Hosting` to register the `SimpleWorkflow` and its activities.
+
 ## Dependency Overview
 
-Several NuGet packages make this sample tick:
+Several NuGet packages have been added to make this sample tick:
 
 - `InfinityFlow.Aspire.Temporal` spins up a Temporal dev server via Aspire so there is no separate install.
 - `Temporalio` and the `Temporalio.Extensions.*` packages provide the .NET SDK and OpenTelemetry wiring.
@@ -53,7 +52,6 @@ Several NuGet packages make this sample tick:
 - `AzureKeyVaultEmulator.Client` plus `AzureKeyVaultEmulator.Aspire.Hosting` stand up a local Key Vault.
 
 These pieces let us run Temporal, Redis and the emulator entirely from the Aspire host, keeping setup simple.
-
 
 ---
 
@@ -88,6 +86,11 @@ if (seeder is not null)
     api.WaitForCompletion(seeder);
     worker.WaitForCompletion(seeder);
 }
+
+var app = builder.Build();
+
+await app.StartAsync();
+await app.WaitForShutdownAsync();
 ```
 
 With a key available we implemented `KeyVaultKeyProvider` and `KeyVaultEncryptionCodec` under `Workflows/Encryption` to load keys and wrap Temporal payloads. Here is the heart of the codec:
@@ -248,7 +251,56 @@ public class SimpleWorkflow
     }
 }
 ```
+## Rolling keys
 
+We want to test whether you can version keys and switch to a new active key, whilst still supporting older keys that need to stay around for old active workflows that were encrypted with older keys.
+
+So idea - why not use Temporal for this task? There's no rule that Temporal should only be used for business related code. In fact is perfect for TechOps, DevOps and DataOps as well. Admittedly you wouldn't want to have an unsecured endpoint for this, but for this demo it's ok.
+
+```csharp
+[Workflow]
+public class KeyRollWorkflow
+{
+	[WorkflowRun]
+	public async Task<string> RunAsync()
+	{
+		return await Workflow.ExecuteActivityAsync<Activities, string>(
+			a => a.RollKey(),
+			new ActivityOptions { StartToCloseTimeout = TimeSpan.FromSeconds(30) });
+	}
+}
+
+[Activity]
+ public async Task<string> RollKey()
+ {
+     var id = $"ns-{Constants.Namespace}-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
+     var secret = new KeyVaultSecret($"temporal-{id}", Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
+     secret.Properties.Tags["namespace"] = Constants.Namespace;
+     await _secrets.SetSecretAsync(secret, ActivityExecutionContext.Current.CancellationToken);
+     await UpdateCacheAsync(ActivityExecutionContext.Current.CancellationToken);
+     return id;
+ }
+
+ private async Task UpdateCacheAsync(CancellationToken ct)
+ {
+     var entries = new List<SortedSetEntry>();
+     await foreach (var prop in _secrets.GetPropertiesOfSecretsAsync(ct))
+     {
+         if (!prop.Tags.TryGetValue("namespace", out var ns) || ns != Constants.Namespace)
+             continue;
+
+         var id = prop.Name.StartsWith(SecretPrefix) ? prop.Name[SecretPrefix.Length..] : prop.Name;
+         var updated = prop.UpdatedOn ?? prop.CreatedOn ?? DateTimeOffset.UtcNow;
+         entries.Add(new SortedSetEntry(id, updated.ToUnixTimeMilliseconds()));
+     }
+
+     await _redis.KeyDeleteAsync(CacheKey);
+     if (entries.Count > 0)
+         await _redis.SortedSetAddAsync(CacheKey, entries.ToArray());
+ }
+```
+
+With this in place we are able to leverage Temporal to create a new version of the key and inject it into the Redis cache. Putting this in a Redis cache is important because the API and the Workers need to be in sync. Using a local memory cache would not offer that, and Redis is the perfect solution for this task.
 
 ---
 
@@ -263,13 +315,16 @@ Writing tests for the encryption layer was another milestone. The `Tests` projec
 public async Task EncodeDecode_RoundTripsPayload()
 {
     var hostBuilder = new HostBuilder();
+    
     hostBuilder.ConfigureServices(s =>
         s.AddAzureKeyVaultEmulator("https://localhost:4997", secrets: true, keys: true, certificates: false));
     using var host = hostBuilder.Build();
+    
     var client = host.Services.GetRequiredService<SecretClient>();
     var id = $"ns-default-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
     await client.SetSecretAsync(new KeyVaultSecret($"temporal-{id}", Convert.ToBase64String(CreateKey()))
     { Properties = { Tags = { ["namespace"] = Constants.Namespace } } });
+    
     var redis = ConnectionMultiplexer.Connect("localhost:6379");
     var provider = new KeyVaultKeyProvider(client, redis, new ConfigurationBuilder().Build());
     var codec = new KeyVaultEncryptionCodec(provider);
@@ -286,40 +341,33 @@ public async Task EncodeDecode_RoundTripsPayload()
 
 ## Running the Demo
 
-1. *(Optional)* run `./dev-setup.ps1` if you prefer to start the Temporal CLI manually.
-2. Launch the Aspire app:
+1. Launch the Aspire app:
    ```bash
    dotnet run --project AppHost
    ```
    This boots the Temporal dev server, the Key Vault emulator and both the API and Worker projects.
-3. Kick off a workflow:
+2. Kick off a workflow:
    ```bash
-   curl -X POST http://localhost:5110/start/hello
+   curl -X POST http://localhost:5228/start/hello
    ```
-4. Continue it when you are ready:
+3. Continue it when you are ready:
    ```bash
-   curl -X POST http://localhost:5110/signal/<workflowId>
+   curl -X POST http://localhost:5228/signal/<workflowId>
    ```
-5. Fetch the result:
+4. Fetch the result:
    ```bash
-   curl http://localhost:5110/result/<workflowId>
+   curl http://localhost:5228/result/<workflowId>
    ```
-6. Try the codec utilities:
+5. Try the codec utilities:
    ```bash
-   curl -X POST http://localhost:5110/encode -H "Content-Type: application/json" -d '{"payloads":[]}'
+   curl -X POST http://localhost:5228/encode -H "Content-Type: application/json" -d '{"payloads":[]}'
+   ```
+6. Try rolling over the keys:
+   ```bash
+   curl -X 'POST' http://localhost:5228/keys/roll -H 'accept: application/json' -d ''
    ```
 
 The Aspire dashboard is available at `http://localhost:18888` and the Temporal Web UI at `http://localhost:8233`.
-
-## Helm Charts via Aspirate
-
-To make deployment as painless as local development we turned to the `aspirate` tool. It reads the Aspire manifest and generates a set of Helm charts. Running
-
-```bash
-aspirate generate AppHost/aspirate.json
-```
-
-produces the templates found in `k8s/base`. They mirror the same services we run locally so you can `helm install` the repo and get a working environment in Kubernetes.
 
 ## Continuous Integration
 
@@ -327,9 +375,76 @@ The `.github/workflows/ci.yml` file defines a small pipeline. Every pull request
 
 ---
 
+## Side Notes
+
+I've slightly misused Keyvault here by querying it for all keys with the same namespace tag, so it's a hacky workaround.
+
+```csharp
+private async Task UpdateCacheFromVaultAsync(CancellationToken ct)
+	{
+		var list = new List<SortedSetEntry>();
+		await foreach (var prop in _client.GetPropertiesOfSecretsAsync(ct))
+		{
+			if (!prop.Tags.TryGetValue("namespace", out var ns) || ns != Constants.Namespace)
+				continue;
+
+			var id = prop.Name.StartsWith(SecretPrefix) ? prop.Name[SecretPrefix.Length..] : prop.Name;
+			var updated = prop.UpdatedOn ?? prop.CreatedOn ?? ParseTimestamp(id);
+			list.Add(new SortedSetEntry(id, updated.ToUnixTimeMilliseconds()));
+		}
+
+		if (list.Count > 0)
+		{
+			await _redis.KeyDeleteAsync(CacheKey);
+			await _redis.SortedSetAddAsync(CacheKey, list.ToArray());
+		}
+	}
+```
+In a full production environment this would be better solved with an environment specific Azure Application Configuration Service, but there is no emulator for that to date, and I'm trying to keep everything local. If you wanted to, it would look something like this:
+
+```csharp
+using System;
+using System.Threading.Tasks;
+using Azure;
+using Azure.Data.AppConfiguration;
+using Azure.Identity;
+
+class Program
+{
+    static async Task Main()
+    {
+        // Your App Configuration endpoint
+        var endpoint = new Uri("https://<your-appconfig-name>.azconfig.io");
+
+        // Authenticate using federated identity
+        var client = new ConfigurationClient(endpoint, new DefaultAzureCredential());
+
+        // Define label to filter by
+        string label = "NS-SIMPLE-WF";
+
+        // Set up selector to filter keys by label
+        var selector = new SettingSelector
+        {
+            KeyFilter = "*",
+            LabelFilter = label
+        };
+
+        // Enumerate all matching key-values
+        await foreach (ConfigurationSetting setting in client.GetConfigurationSettingsAsync(selector))
+        {
+            Console.WriteLine($"Key: {setting.Key}");
+            Console.WriteLine($"Value: {setting.Value}");
+            Console.WriteLine($"Label: {setting.Label}");
+            Console.WriteLine($"ContentType: {setting.ContentType}");
+            Console.WriteLine();
+        }
+    }
+}
+```
+
 ## Wrapping Up
 
-Through a handful of PRs we evolved this repository from a barebones workflow demo into a miniature environment that mirrors production features: encrypted payloads, repeatable tests and full telemetry. Along the way we leaned on packages like `InfinityFlow.Aspire.Temporal` to manage the Temporal server and the Key Vault emulator to avoid external dependencies. Feel free to explore the `k8s` directory for deployment examples or the test suite for more advanced usage.
+This evolved repository mirrors production features: encrypted payloads, repeatable tests and full telemetry. Along the way we leaned on packages like `InfinityFlow.Aspire.Temporal` to manage the Temporal server and the Key Vault emulator to avoid external dependencies. Feel free to explore the `k8s` directory for deployment examples or the test suite for more advanced usage.
 
-Enjoy experimenting with TemporalAspireDemo – we certainly enjoyed building it together!
+Enjoy experimenting with .NET Aspire and Temporal!
 
