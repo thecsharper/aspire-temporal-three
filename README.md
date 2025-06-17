@@ -444,7 +444,7 @@ class Program
 
 ## Wrapping Up
 
-This evolved repository mirrors production features: encrypted payloads, repeatable tests and full telemetry. Along the way we leaned on packages like `InfinityFlow.Aspire.Temporal` to manage the Temporal server and the Key Vault emulator to avoid external dependencies. Feel free to explore the `k8s` directory for deployment examples or the test suite for more advanced usage.
+This evolved repository mirrors production features: encrypted payloads, repeatable tests and full telemetry. Along the way we leaned on packages like `InfinityFlow.Aspire.Temporal` to manage the Temporal server and the Key Vault emulator to avoid external dependencies.
 
 Enjoy experimenting with .NET Aspire and Temporal!
 
