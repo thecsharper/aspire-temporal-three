@@ -43,6 +43,17 @@ await app.WaitForShutdownAsync();
 ```
 
 At this point running `dotnet run --project AppHost` launched Temporal and we could POST to `/start/{message}` to kick off a workflow. The worker used `Temporalio.Extensions.Hosting` to register the `SimpleWorkflow` and its activities.
+## Dependency Overview
+
+Several NuGet packages make this sample tick:
+
+- `InfinityFlow.Aspire.Temporal` spins up a Temporal dev server via Aspire so there is no separate install.
+- `Temporalio` and the `Temporalio.Extensions.*` packages provide the .NET SDK and OpenTelemetry wiring.
+- `Aspire.StackExchange.Redis` configures Redis and exposes a connection string for dependent projects.
+- `AzureKeyVaultEmulator.Client` plus `AzureKeyVaultEmulator.Aspire.Hosting` stand up a local Key Vault.
+
+These pieces let us run Temporal, Redis and the emulator entirely from the Aspire host, keeping setup simple.
+
 
 ---
 
@@ -53,25 +64,30 @@ Next we tackled secure payload storage. Instead of persisting plaintext workflow
 - [`AzureKeyVaultEmulator.Aspire.Hosting`](https://www.nuget.org/packages/AzureKeyVaultEmulator.Aspire.Hosting)
 - [`AzureKeyVaultEmulator.Client`](https://www.nuget.org/packages/AzureKeyVaultEmulator.Client)
 
-We added the emulator as a service in `AppHost` along with a small seeder project that provisions a key when the app starts locally. The seeder also records the available key IDs in Redis so the apps don't fetch everything from Key Vault each time. Redis itself is configured via the hosting API:
+We added the emulator as a service in `AppHost` along with a small seeder project that provisions a key when the app starts locally. The seeder runs as a one-shot container and exits after inserting the key. It also records the available key IDs in Redis so the apps don't fetch everything from Key Vault each time. Redis acts as a simple distributed cache that both the API and Worker can share. Redis itself is configured via the hosting API:
 
 ```csharp
 IResourceBuilder<ProjectResource>? seeder = null;
 if (!builder.ExecutionContext.IsPublishMode)
-{
-    seeder = builder.AddProject<Projects.KeyVaultSeeder>("keyvaultseeder")
+    seeder = builder.AddProject<KeyVaultSeeder>("keyvaultseeder")
         .WithReference(keyVault)
         .WithReference(cache)
         .WithArgs("seed");
-}
 
 var api = builder.AddProject<Api>("api")
     .WithReference(temporal)
     .WithReference(keyVault)
     .WithReference(cache);
+var worker = builder.AddProject<Worker>("worker")
+    .WithReference(temporal)
+    .WithReference(keyVault)
+    .WithReference(cache);
 
 if (seeder is not null)
+{
     api.WaitForCompletion(seeder);
+    worker.WaitForCompletion(seeder);
+}
 ```
 
 With a key available we implemented `KeyVaultKeyProvider` and `KeyVaultEncryptionCodec` under `Workflows/Encryption` to load keys and wrap Temporal payloads. Here is the heart of the codec:
@@ -142,8 +158,18 @@ builder.AddServiceDefaults(
             .AddSource(TracingInterceptor.ActivitiesSource.Name);
     });
 
+// Configure Temporal runtime with OTEL metric support
+var temporalMeter = new Meter("Temporal.Client");
+var runtime = new TemporalRuntime(new TemporalRuntimeOptions
+{
+    Telemetry = new TelemetryOptions
+    {
+        Metrics = new MetricsOptions { CustomMetricMeter = new CustomMetricMeter(temporalMeter) }
+    }
+});
+
 var vaultUri = builder.Configuration.GetConnectionString("keyvault") ?? string.Empty;
-builder.Services.AddAzureKeyVaultEmulator(vaultUri, secrets: true, keys: true, certificates: false);
+builder.Services.AddAzureKeyVaultEmulator(vaultUri, true, true);
 builder.AddRedisClient("cache");
 builder.Services.AddSingleton<KeyVaultKeyProvider>();
 builder.Services.AddSingleton<KeyVaultEncryptionCodec>();
@@ -166,6 +192,7 @@ builder.Services
 builder.Services
     .AddHostedTemporalWorker(Constants.TaskQueue)
     .AddWorkflow<SimpleWorkflow>()
+    .AddWorkflow<KeyRollWorkflow>()
     .AddScopedActivities<Activities>();
 
 var workflowMeter = new Meter("WorkflowMetrics");
