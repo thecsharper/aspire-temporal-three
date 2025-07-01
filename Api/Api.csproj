@@ -13,15 +13,16 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Aspire.Hosting" Version="9.3.0"/>
-        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.16"/>
-        <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2"/>
-        <PackageReference Include="Temporalio" Version="1.6.0"/>
-        <PackageReference Include="Temporalio.Extensions.DiagnosticSource" Version="1.6.0"/>
-        <PackageReference Include="Temporalio.Extensions.Hosting" Version="1.6.0"/>
-        <PackageReference Include="Temporalio.Extensions.OpenTelemetry" Version="1.6.0"/>
-        <PackageReference Include="AzureKeyVaultEmulator.Client" Version="2.3.2"/>
-        <PackageReference Include="Aspire.StackExchange.Redis" Version="9.3.0"/>
+        <PackageReference Include="Aspire.Hosting" Version="9.3.0" />
+        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.16" />
+        <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+        <PackageReference Include="System.Formats.Asn1" Version="6.0.1" />
+        <PackageReference Include="Temporalio" Version="1.6.0" />
+        <PackageReference Include="Temporalio.Extensions.DiagnosticSource" Version="1.6.0" />
+        <PackageReference Include="Temporalio.Extensions.Hosting" Version="1.6.0" />
+        <PackageReference Include="Temporalio.Extensions.OpenTelemetry" Version="1.6.0" />
+        <PackageReference Include="AzureKeyVaultEmulator.Client" Version="2.3.2" />
+        <PackageReference Include="Aspire.StackExchange.Redis" Version="9.3.0" />
     </ItemGroup>
 
     <ItemGroup>
@@ -31,8 +32,8 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\ServiceDefaults\ServiceDefaults.csproj"/>
-        <ProjectReference Include="..\Workflows\Workflows.csproj"/>
+        <ProjectReference Include="..\ServiceDefaults\ServiceDefaults.csproj" />
+        <ProjectReference Include="..\Workflows\Workflows.csproj" />
     </ItemGroup>
 
 </Project>

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-    <Sdk Name="Aspire.AppHost.Sdk" Version="9.3.0"/>
+    <Sdk Name="Aspire.AppHost.Sdk" Version="9.3.0" />
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
@@ -12,18 +12,19 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Aspire.Hosting.AppHost" Version="9.3.0"/>
-        <PackageReference Include="Aspire.Hosting.Redis" Version="9.3.0"/>
-        <PackageReference Include="InfinityFlow.Aspire.Temporal" Version="0.6.2"/>
-        <PackageReference Include="AzureKeyVaultEmulator.Aspire.Hosting" Version="2.3.2"/>
-        <PackageReference Include="AzureKeyVaultEmulator.Client" Version="2.3.2"/>
-        <PackageReference Include="Azure.Security.KeyVault.Secrets" Version="4.7.0"/>
+        <PackageReference Include="Aspire.Hosting.AppHost" Version="9.3.0" />
+        <PackageReference Include="Aspire.Hosting.Redis" Version="9.3.0" />
+        <PackageReference Include="InfinityFlow.Aspire.Temporal" Version="0.6.2" />
+        <PackageReference Include="AzureKeyVaultEmulator.Aspire.Hosting" Version="2.3.2" />
+        <PackageReference Include="AzureKeyVaultEmulator.Client" Version="2.3.2" />
+        <PackageReference Include="Azure.Security.KeyVault.Secrets" Version="4.7.0" />
+        <PackageReference Include="System.Formats.Asn1" Version="6.0.1" />
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\Api\Api.csproj"/>
-        <ProjectReference Include="..\Worker\Worker.csproj"/>
-        <ProjectReference Include="..\KeyVaultSeeder\KeyVaultSeeder.csproj"/>
+        <ProjectReference Include="..\Api\Api.csproj" />
+        <ProjectReference Include="..\Worker\Worker.csproj" />
+        <ProjectReference Include="..\KeyVaultSeeder\KeyVaultSeeder.csproj" />
     </ItemGroup>
 
 </Project>
