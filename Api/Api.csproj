@@ -13,7 +13,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Aspire.Hosting" Version="9.3.0" />
+        <PackageReference Include="Aspire.Hosting" Version="9.3.2" />
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.16" />
         <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
         <PackageReference Include="System.Formats.Asn1" Version="6.0.1" />
